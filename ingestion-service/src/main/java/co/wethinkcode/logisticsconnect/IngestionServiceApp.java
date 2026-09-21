@@ -18,7 +18,7 @@ public class IngestionServiceApp {
     public static void main(String[] args) {
 
         //Read raw records on startup
-        List<HubRecord> rawHubs = loadRawHubs ();
+        List<HubRecord> cleanedHubs = loadAndCleanHubs ();
 
         Javalin app = Javalin.create().start(7050);
 
@@ -28,10 +28,10 @@ public class IngestionServiceApp {
         // trim whitespace, fix casing, normalize dates/booleans) and expose the
         // cleaned records here for the other services to consume.
 
-        app.get("/hubs", ctx -> ctx.json(rawHubs));
+        app.get("/hubs", ctx -> ctx.json(cleanedHubs));
     }
 
-    private static List<HubRecord> loadRawHubs () {
+    private static List<HubRecord> loadAndCleanHubs () {
         List<HubRecord> records = new ArrayList<>();
 
         // Load CSV from src/main/resources via ClassLoader
@@ -59,20 +59,60 @@ public class IngestionServiceApp {
                 String[] parts = line.split(",", -1);
                 if (parts.length < 4) continue;
 
-                // Extract raw string values without cleaning yet
-                String rawHubId = parts[0];
-                String rawProvince = parts[1];
-                String rawSortingCenter = parts[2];
-                String rawActive = parts[3];
+                // Applied text cleaning rules
 
-                // Create record with raw strings (leaving boolean as null for now)
-                records.add(new HubRecord(rawHubId, rawProvince, rawSortingCenter, null));
+                // 1. Hub ID: Trim and force Uppercase (e.g. "h-501" -> "H-501")
+                String hubId = cleanString(parts[0]).toUpperCase();
+
+                // 2. Province: Clean, apply title case, and fix spelling variants
+                String province = normalizeProvince(parts[1]);
+
+                // 3. Sorting Center: Clean and apply title case (e.g. "johannesburg central" -> "Johannesburg Central")
+                String sortingCenter = capitalizeWords(cleanString(parts[2]));
+
+                // Leave active flag as null for now (Step 4)
+                records.add(new HubRecord(hubId, province, sortingCenter, null));
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
 
         return records;
+    }
+
+    //Removes leading/trailing spaces and collapses internal double spaces
+    private static String cleanString(String input) {
+        if (input == null) return "";
+        return input.trim().replaceAll("\\s+", " ");
+    }
+
+    //Standardize spelling variants and apply Title Case
+    private static String normalizeProvince (String raw) {
+        String cleaned = capitalizeWords(cleanString(raw));
+        if (cleaned.isBlank()) return "";
+
+        //Standardise KwaZulu-Natal variations
+        if (cleaned.equalsIgnoreCase("Kwa-Zulu Natal") || cleaned.equalsIgnoreCase("KwaZulu Natal")) {
+            return "KwaZulu-Natal";
+        }
+        return cleaned;
+    }
+
+    //Capitalize the first letter of each word
+    private static String capitalizeWords (String input) {
+
+        if (input == null || input.isBlank()) return input;
+
+        String[] words = input.toLowerCase().split(" ");
+        StringBuilder sb = new StringBuilder();
+
+        for (String word: words) {
+            if (!word.isEmpty()) {
+                sb.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1)).append(" ");
+
+            }
+        }
+        return sb.toString().trim();
     }
 }
 
