@@ -1,8 +1,11 @@
 package co.wethinkcode.logisticsconnect;
 
+import co.wethinkcode.logisticsconnect.mq.MqConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.javalin.Javalin;
+import org.apache.activemq.ActiveMQConnectionFactory;
 
+import javax.jms.*;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -19,6 +22,9 @@ public class TransitServiceApp {
 
     public static void main(String[] args) {
         Javalin app = Javalin.create().start(7053);
+
+        // Start listening to ActiveMQ topic in the background
+        startMqSubscriber();
 
         app.get("/health", ctx -> ctx.result("OK"));
 
@@ -82,5 +88,33 @@ public class TransitServiceApp {
             System.err.println("Error calling DelayStageService: " + e.getMessage());
         }
         return 0; // Default fallback to 0 delay
+    }
+
+    private static void startMqSubscriber() {
+        new Thread(() -> {
+            try {
+                ConnectionFactory connectionFactory = new ActiveMQConnectionFactory(MqConfig.BROKER_URL);
+                Connection connection = connectionFactory.createConnection();
+                connection.start();
+
+                Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+                Topic destination = session.createTopic(MqConfig.TOPIC);
+                MessageConsumer consumer = session.createConsumer(destination);
+
+                System.out.println(">>> [MQ CONSUMER] TransitService subscribed to topic: " + MqConfig.TOPIC);
+
+                consumer.setMessageListener(message -> {
+                    if (message instanceof TextMessage textMessage) {
+                        try {
+                            System.out.println(">>> [MQ RECEIVED] TransitService received event: " + textMessage.getText());
+                        } catch (JMSException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                System.err.println(">>> [MQ ERROR] TransitService failed to connect to ActiveMQ: " + e.getMessage());
+            }
+        }).start();
     }
 }
