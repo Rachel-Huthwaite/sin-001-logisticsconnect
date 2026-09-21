@@ -6,10 +6,7 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public class IngestionServiceApp {
 
@@ -25,15 +22,12 @@ public class IngestionServiceApp {
 
         app.get("/health", ctx -> ctx.result("OK"));
 
-        // TODO: read and clean src/main/resources/hubs-global.csv (hubs, sorting centers, regional districts data —
-        // trim whitespace, fix casing, normalize dates/booleans) and expose the
-        // cleaned records here for the other services to consume.
-
         app.get("/hubs", ctx -> ctx.json(cleanedHubs));
     }
 
     private static List<HubRecord> loadAndCleanHubs () {
-        List<HubRecord> records = new ArrayList<>();
+        // LinkedHashMap preserves insertion order while deduplicating by entity key
+        Map<String, HubRecord> deduplicatedHubs = new LinkedHashMap<>();
 
         // Load CSV from src/main/resources via ClassLoader
         InputStream is = IngestionServiceApp.class.getClassLoader().getResourceAsStream("hubs-global.csv");
@@ -73,13 +67,34 @@ public class IngestionServiceApp {
 
                 Boolean active = parseBoolean(cleanString(parts[3]));
 
-                records.add(new HubRecord(hubId, province, sortingCenter, active));
+                // Drop records missing critical location data
+                if (province.isBlank() || sortingCenter.isBlank()) {
+                    continue;
+                }
+
+                HubRecord currentRecord = new HubRecord(hubId, province, sortingCenter, active);
+
+                // Deduplication & Conflict resolution
+                String entityKey = (province + "::" + sortingCenter).toLowerCase();
+
+                if (!deduplicatedHubs.containsKey(entityKey)) {
+                    deduplicatedHubs.put(entityKey, currentRecord);
+                } else {
+                    HubRecord existing = deduplicatedHubs.get(entityKey);
+
+                    // Conflict Resolution:
+                    // 1. Replace if existing has null active status but current has a value.
+                    // 2. Replace if current is true and existing is false.
+                    if (existing.active() == null || (Boolean.TRUE.equals(currentRecord.active()) && !existing.active())) {
+                        deduplicatedHubs.put(entityKey, currentRecord);
+                    }
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
 
-        return records;
+        return new ArrayList<>(deduplicatedHubs.values());
     }
 
     //Normalize booleans to return true, false or null
