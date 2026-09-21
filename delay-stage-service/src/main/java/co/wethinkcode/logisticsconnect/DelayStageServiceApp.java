@@ -1,7 +1,11 @@
 package co.wethinkcode.logisticsconnect;
 
+import co.wethinkcode.logisticsconnect.mq.MqConfig;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.javalin.Javalin;
+import org.apache.activemq.ActiveMQConnectionFactory;
 
+import javax.jms.*;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -9,8 +13,10 @@ public class DelayStageServiceApp {
 
     public record DelayRequest(Integer delayStage) {}
     public record DelayResponse(String hubId, int delayStage) {}
+    public record StatusEvent(String hubId, int delayStage, String timestamp) {}
 
     private static final Map<String, Integer> delayStages = new ConcurrentHashMap<>();
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public static void main(String[] args) {
         Javalin app = Javalin.create().start(7052);
@@ -41,7 +47,36 @@ public class DelayStageServiceApp {
             }
 
             delayStages.put(hubId, stage);
+            // Trigger MQ Event if delay stage is 3 or higher
+            if (stage >= 3) {
+                publishDelayAlert(hubId, stage);
+            }
+
             ctx.json(new DelayResponse(hubId, stage));
         });
+    }
+
+    private static void publishDelayAlert(String hubId, int stage) {
+        try {
+            ConnectionFactory connectionFactory = new ActiveMQConnectionFactory(MqConfig.BROKER_URL);
+            Connection connection = connectionFactory.createConnection();
+            connection.start();
+
+            Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+            Topic destination = session.createTopic(MqConfig.TOPIC);
+            MessageProducer producer = session.createProducer(destination);
+
+            StatusEvent event = new StatusEvent(hubId, stage, String.valueOf(System.currentTimeMillis()));
+            String jsonPayload = objectMapper.writeValueAsString(event);
+
+            TextMessage message = session.createTextMessage(jsonPayload);
+            producer.send(message);
+
+            System.out.println(">>> [MQ PRODUCER] Published delay alert for " + hubId + " (Stage " + stage + ")");
+
+            connection.close();
+        } catch (Exception e) {
+            System.err.println(">>> [MQ ERROR] Failed to send message to broker: " + e.getMessage());
+        }
     }
 }
