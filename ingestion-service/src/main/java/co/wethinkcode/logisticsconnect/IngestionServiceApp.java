@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 
 public class IngestionServiceApp {
 
@@ -61,7 +62,7 @@ public class IngestionServiceApp {
 
                 // Applied text cleaning rules
 
-                // 1. Hub ID: Trim and force Uppercase (e.g. "h-501" -> "H-501")
+                // 1. Hub ID: Trim and force Uppercase
                 String hubId = cleanString(parts[0]).toUpperCase();
 
                 // 2. Province: Clean, apply title case, and fix spelling variants
@@ -70,14 +71,30 @@ public class IngestionServiceApp {
                 // 3. Sorting Center: Clean and apply title case (e.g. "johannesburg central" -> "Johannesburg Central")
                 String sortingCenter = capitalizeWords(cleanString(parts[2]));
 
-                // Leave active flag as null for now (Step 4)
-                records.add(new HubRecord(hubId, province, sortingCenter, null));
+                Boolean active = parseBoolean(cleanString(parts[3]));
+
+                records.add(new HubRecord(hubId, province, sortingCenter, active));
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
 
         return records;
+    }
+
+    //Normalize booleans to return true, false or null
+    private static Boolean parseBoolean(String value) {
+        if (value == null || value.isBlank()) return null;
+
+        String val = value.toLowerCase();
+        if (Set.of("y", "yes", "1", "true").contains(val)){
+            return true;
+        } else if (Set.of("n","no","0","false").contains(val)) {
+            return false;
+        }
+
+        //returns null for unknown or N/A or anything else unspecified
+        return null;
     }
 
     //Removes leading/trailing spaces and collapses internal double spaces
